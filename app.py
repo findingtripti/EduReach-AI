@@ -1,7 +1,46 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
-import folium
 from streamlit_folium import st_folium
+
+from edureach_map import build_village_map
+from edureach_core import (
+    GAP_THRESHOLD, INTERVENTION_CONNECTIVITY, INTERVENTION_NEW_SCHOOL,
+    SCOPE_ALL, SCOPE_NO_SCHOOL, apply_filters, gmm_diagnostics,
+    load_dashboard_data, simulate_scenario, scenario_summary,
+    validate_dataset,
+)
+
+
+import altair as alt
+
+
+def labelled_bar_chart(labels, values, x_title, y_title, y_max, value_format=".2f", height=320):
+    """Bar chart with a fixed 0..y_max axis and horizontal labels.
+
+    The value is written into each category label (for example
+    "Baseline: 67.25"). Axis text follows the active light/dark theme, so the
+    numbers stay readable in both. A fixed axis keeps bars from being clipped
+    and keeps small differences honest.
+    """
+    values = [float(v) for v in values]
+    data = pd.DataFrame({
+        "label": [f"{lab}: {val:{value_format}}" for lab, val in zip(labels, values)],
+        "name": [str(lab) for lab in labels],
+        "value": values,
+    })
+    return (
+        alt.Chart(data)
+        .mark_bar(color="#3b82f6", size=90)
+        .encode(
+            x=alt.X("label:N", sort=None, title=x_title,
+                    axis=alt.Axis(labelAngle=0, labelLimit=320)),
+            y=alt.Y("value:Q", title=y_title,
+                    scale=alt.Scale(domain=[0, y_max], nice=False)),
+            tooltip=[alt.Tooltip("name:N", title=x_title),
+                     alt.Tooltip("value:Q", title=y_title, format=value_format)],
+        )
+        .properties(height=height)
+    )
 
 
 # =========================================================
@@ -10,7 +49,7 @@ from streamlit_folium import st_folium
 
 st.set_page_config(
     page_title="EduReach AI",
-    page_icon="",
+    page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -23,114 +62,108 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-
-    /* Main page */
-    .block-container {
-        padding-top: 1.8rem;
-        padding-bottom: 3rem;
+    /* Theme-aware palette: light-dark() follows the active Streamlit theme
+       (light, dark or "use system setting"), not just the operating system. */
+    .stApp {
+        --er-card-bg: light-dark(#ffffff, #161d2b);
+        --er-soft-bg: light-dark(#f8fafc, #121926);
+        --er-card-border: light-dark(#e2e8f0, #2a3547);
+        --er-text: light-dark(#0f172a, #f1f5f9);
+        --er-muted: light-dark(#475569, #94a3b8);
+        --er-alert: light-dark(#dc2626, #f87171);
+        --er-shadow: light-dark(0 5px 18px rgba(15,23,42,0.07), 0 5px 18px rgba(0,0,0,0.45));
     }
 
-    /* Remove excessive top spacing */
-    header[data-testid="stHeader"] {
-        background: transparent;
-    }
+    .block-container { padding-top: 1.8rem; padding-bottom: 3rem; }
+    header[data-testid="stHeader"] { background: transparent; }
+    h1, h2, h3 { font-weight: 700 !important; }
+    section[data-testid="stSidebar"] { border-right: 1px solid var(--er-card-border); }
+    div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+    hr { margin-top: 1.5rem; margin-bottom: 1.5rem; }
 
-    /* General headings */
-    h1, h2, h3 {
-        font-weight: 700 !important;
+    /* Hero banner */
+    .er-hero {
+        padding: 34px 40px; border-radius: 22px; margin-bottom: 24px;
+        background: linear-gradient(135deg, light-dark(#0f172a, #1e3a5f) 0%, light-dark(#1e3a5f, #2b5282) 100%);
+        border: 1px solid light-dark(transparent, #3b4a63);
+        box-shadow: var(--er-shadow);
     }
+    .er-hero-title { font-size: 42px; font-weight: 750; color: #ffffff; margin-bottom: 8px; line-height: 1.1; }
+    .er-hero-sub { font-size: 22px; font-weight: 600; color: #dbeafe; margin-bottom: 12px; }
+    .er-hero-desc { font-size: 15px; color: #cbd5e1; line-height: 1.6; }
+
+    /* Cards */
+    .er-card {
+        background: var(--er-card-bg); padding: 22px; border-radius: 16px; min-height: 140px;
+        border: 1px solid var(--er-card-border); box-shadow: var(--er-shadow);
+    }
+    .er-card.compact { padding: 16px; border-radius: 12px; min-height: 0; box-shadow: none; background: var(--er-soft-bg); }
+    .er-label { font-size: 14px; color: var(--er-muted); font-weight: 600; margin-bottom: 9px; }
+    .er-card.compact .er-label { font-weight: 500; margin-bottom: 6px; }
+    .er-value { font-size: 32px; font-weight: 750; color: var(--er-text); }
+    .er-card.compact .er-value { font-size: 28px; }
+    .er-value.alert { color: var(--er-alert); }
+    .er-sub { font-size: 12px; color: var(--er-muted); margin-top: 4px; }
 
     /* Sidebar */
-    section[data-testid="stSidebar"] {
-        border-right: 1px solid #e2e8f0;
-    }
+    .er-side-title { font-size: 24px; font-weight: 750; color: var(--er-text); margin-bottom: 4px; }
+    .er-side-sub { font-size: 13px; color: var(--er-muted); margin-bottom: 22px; }
+    .er-side-block { font-size: 13px; line-height: 1.7; padding-top: 4px; }
+    .er-side-label { color: var(--er-muted); font-weight: 600; margin-bottom: 2px; }
+    .er-side-text { color: var(--er-text); line-height: 1.5; margin-bottom: 18px; }
+    .er-side-big { color: var(--er-text); font-size: 18px; font-weight: 700; margin-bottom: 18px; }
 
-    /* Dataframe */
-    div[data-testid="stDataFrame"] {
-        border-radius: 12px;
-        overflow: hidden;
+    /* Methodology note */
+    .er-note {
+        padding: 18px 20px; border-radius: 14px; font-size: 13px; line-height: 1.7;
+        background: var(--er-soft-bg); border: 1px solid var(--er-card-border); color: var(--er-muted);
     }
-
-    /* Divider */
-    hr {
-        margin-top: 1.5rem;
-        margin-bottom: 1.5rem;
-    }
-
+    .er-note b { color: var(--er-text); }
     </style>
     """,
     unsafe_allow_html=True
 )
 
 
+def _prefers_dark_theme():
+    """Best-effort choice of the initial map style (the map also has a layer switch)."""
+    try:
+        base = st.get_option("theme.base")
+        if base in ("light", "dark"):
+            return base == "dark"
+    except Exception:
+        pass
+    try:
+        return st.context.theme.type == "dark"
+    except Exception:
+        return False
+
+
 # =========================================================
 # LOAD DATA
 # =========================================================
 
-DATA_PATH = "edureach_dashboard.csv"
-
 try:
-    df = pd.read_csv(DATA_PATH)
-except FileNotFoundError:
-    st.error(
-        "edureach_dashboard.csv not found. "
-        "Please keep app.py and edureach_dashboard.csv in the same folder."
-    )
+    df = load_dashboard_data()
+except FileNotFoundError as exc:
+    st.error(str(exc))
     st.stop()
 
+# Data validation: show problems instead of silently filling values.
+_data_issues = validate_dataset(df)
+for _severity, _message in _data_issues:
+    (st.error if _severity == "error" else st.warning)(
+        f"Data check: {_message}"
+    )
+if any(_severity == "error" for _severity, _ in _data_issues):
+    st.stop()
 
-# =========================================================
-# BASIC DATA CLEANING
-# =========================================================
+df["School_Count"] = df["School_Count"].astype(int)
+df["Has_School"] = df["Has_School"].astype(int)
+df["Potential_Gap_Candidate"] = df["Potential_Gap_Candidate"].astype(int)
 
-numeric_columns = [
-    "Latitude",
-    "Longitude",
-    "Has_School",
-    "School_Count",
-    "Nearest_School_Distance_km",
-    "Accessibility_Index",
-    "Potential_Gap_Candidate",
-    "ML_Cluster",
-    "JJM_Water_Completion",
-    "JJM_FHTC_Coverage",
-    "Combined_Accessibility_Index",
-    "Combined_Improvement"
-]
-
-for col in numeric_columns:
-    if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-
-df["Has_School"] = df["Has_School"].fillna(0).astype(int)
-
-df["School_Count"] = df["School_Count"].fillna(0)
-
-df["Accessibility_Index"] = df[
-    "Accessibility_Index"
-].fillna(0)
-
-df["Potential_Gap_Candidate"] = df[
-    "Potential_Gap_Candidate"
-].fillna(0).astype(int)
-
-# =========================================================
-# DASHBOARD VISUAL ACCESSIBILITY CLASSIFICATION
-# =========================================================
-
-def get_visual_status(score):
-
-    if score < 40:
-        return "Potential Gap"
-    elif score > 70:
-       return "Higher"
-    return "Moderate"
-
-
-df["Dashboard_Status"] = df[
-    "Accessibility_Index"
-].apply(get_visual_status)
+# Dashboard_Status is created in edureach_core.classify_status():
+# index < 40 Potential Gap, 40-<70 Moderate (internal), >= 70 Higher.
 
 # =========================================================
 # HERO HEADER
@@ -138,46 +171,13 @@ df["Dashboard_Status"] = df[
 
 st.html(
     """
-    <div style="
-        padding: 34px 40px;
-        border-radius: 22px;
-        background: linear-gradient(
-            135deg,
-            #0f172a 0%,
-            #1e3a5f 100%
-        );
-        margin-bottom: 24px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.16);
-    ">
-
-        <div style="
-            font-size: 42px;
-            font-weight: 750;
-            color: #ffffff;
-            margin-bottom: 8px;
-            line-height: 1.1;
-        ">
-             EduReach AI
-        </div>
-
-        <div style="
-            font-size: 22px;
-            font-weight: 600;
-            color: #dbeafe;
-            margin-bottom: 12px;
-        ">
-            From School Availability to Actual Accessibility
-        </div>
-
-        <div style="
-            font-size: 15px;
-            color: #cbd5e1;
-            line-height: 1.6;
-        ">
-            AI/ML & GIS-based decision-support system for
+    <div class="er-hero">
+        <div class="er-hero-title">EduReach AI</div>
+        <div class="er-hero-sub">From School Availability to Actual Accessibility</div>
+        <div class="er-hero-desc">
+            AI/ML &amp; GIS-based decision-support system for
             government-school accessibility analysis
         </div>
-
     </div>
     """
 )
@@ -190,37 +190,22 @@ st.html(
 with st.sidebar:
 
     st.markdown(
-        """
-        <div style="
-            font-size:24px;
-            font-weight:750;
-            color:#0f172a;
-            margin-bottom:4px;
-        ">
-             EduReach AI
-        </div>
-
-        <div style="
-            font-size:13px;
-            color:#64748b;
-            margin-bottom:22px;
-        ">
-            Accessibility Intelligence Dashboard
-        </div>
-        """,
+        '<div class="er-side-title">EduReach AI</div>'
+        '<div class="er-side-sub">Accessibility Intelligence Dashboard</div>',
         unsafe_allow_html=True
     )
 
     st.markdown("### Filters")
 
+    status_options = [
+        s for s in ["Higher", "Moderate", "Potential Gap"]
+        if s in set(df["Dashboard_Status"])
+    ]
     accessibility_filter = st.multiselect(
-         "Accessibility Status",
-         options=[
-            "Higher",
-            "Potential Gap"],
-        default=["Higher",
-                 "Potential Gap"]
-
+        "Accessibility Status",
+        options=status_options,
+        default=status_options,
+        help="Project-defined categories from the Accessibility Index."
     )
     st.markdown("")
 
@@ -236,260 +221,68 @@ with st.sidebar:
     st.markdown("---")
 
     st.html(
+        f"""
+        <div class="er-side-block">
+            <div class="er-side-label">Study Area</div>
+            <div class="er-side-text">Shravasti - Jamunaha</div>
+            <div class="er-side-label">Village Records</div>
+            <div class="er-side-big">{len(df)}</div>
+            <div class="er-side-label">ML Method</div>
+            <div class="er-side-text">Unsupervised Gaussian<br>Mixture Model</div>
+        </div>
         """
-        <div style="
-            font-size:13px;
-            color:#94a3b8;
-            line-height:1.7;
-         padding-top:4px;
-        "> 
-
-           <div style="
-              color:#64748b;
-              font-weight:600;
-              margin-bottom:2px;
-           ">
-                Study Area
-            </div>
-
-            <div style="margin-bottom:18px;">
-             Shravasti - Jamunaha
-            </div>
-
-
-            <div style="
-                color:#64748b;
-                font-weight:600;
-                margin-bottom:2px;
-            ">
-                 Village Records
-            </div>
-
-            <div style="
-                color:#e2e8f0;
-                font-size:18px;
-                font-weight:700;
-                margin-bottom:18px;
-            ">
-                  115
-            </div>
-
-
-            <div style="
-                color:#64748b;
-                font-weight:600;
-                margin-bottom:2px;
-            ">
-                ML Method
-            </div>
-
-            <div style="
-                color:#e2e8f0;
-                line-height:1.5;
-            ">
-             Unsupervised Gaussian<br>
-             Mixture Model
-            </div>
-
-         </div>
-    """
-)
+    )
+    st.caption("Theme: follows your device by default. Switch System / Light / Dark from the \u22ee menu (top right).")
     
 
 # =========================================================
 # APPLY FILTERS
 # =========================================================
 
-filtered_df = df.copy()
-
-if accessibility_filter:
-    filtered_df = filtered_df[
-        filtered_df["Dashboard_Status"].isin(
-            accessibility_filter
-        )
-    ]
-
-if school_filter == "School Available":
-    filtered_df = filtered_df[
-        filtered_df["Has_School"] == 1
-    ]
-
-elif school_filter == "No Local School Record":
-    filtered_df = filtered_df[
-        filtered_df["Has_School"] == 0
-    ]
-
+filtered_df = apply_filters(df, accessibility_filter, school_filter)
 
 # =========================================================
 # KPI CALCULATIONS
 # =========================================================
 
-# Overall study-area metrics: use the complete dataset
-total_villages = len(df)
-
-potential_gaps = int(
-    df["Potential_Gap_Candidate"].sum()
-)
-
+# KPIs describe the villages in the current selection
+# (with the default filters this is the complete study area).
+total_villages = len(filtered_df)
+potential_gaps = int((filtered_df["Dashboard_Status"] == "Potential Gap").sum())
 average_accessibility = (
-    df["Accessibility_Index"].mean()
+    filtered_df["Accessibility_Index"].mean()
+    if len(filtered_df) > 0
+    else 0.0
+)
+ml_patterns = (
+    filtered_df["ML_Pattern"].nunique()
     if len(filtered_df) > 0
     else 0
 )
-
-ml_patterns = (
-    df["ML_Pattern"].nunique()
-    if not df.empty
-    else 0
-)
-
 
 # =========================================================
 # KPI CARDS
 # =========================================================
 
+def _kpi_card(label, value, sub, alert=False):
+    value_class = "er-value alert" if alert else "er-value"
+    return (
+        f'<div class="er-card"><div class="er-label">{label}</div>'
+        f'<div class="{value_class}">{value}</div>'
+        f'<div class="er-sub">{sub}</div></div>'
+    )
+
+
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
-
 with kpi1:
-
-    st.html(
-        f"""
-        <div style="
-            background:#ffffff;
-            padding:22px;
-            border-radius:16px;
-            border:1px solid #e2e8f0;
-            box-shadow:0 5px 18px rgba(0,0,0,0.07);
-            min-height:112px;
-        ">
-
-            <div style="
-                font-size:14px;
-                color:#475569;
-                font-weight:600;
-                margin-bottom:9px;
-            ">
-                Total Villages
-            </div>
-
-            <div style="
-                font-size:32px;
-                font-weight:750;
-                color:#0f172a;
-            ">
-                {total_villages}
-            </div>
-
-        </div>
-        """
-    )
-
-
+    st.html(_kpi_card("Total Villages", f"{total_villages}", f"of {len(df)} in study area"))
 with kpi2:
-
-    st.html(
-        f"""
-        <div style="
-            background:#ffffff;
-            padding:22px;
-            border-radius:16px;
-            border:1px solid #e2e8f0;
-            box-shadow:0 5px 18px rgba(0,0,0,0.07);
-            min-height:112px;
-        ">
-
-            <div style="
-                font-size:14px;
-                color:#475569;
-                font-weight:600;
-                margin-bottom:9px;
-            ">
-                Potential Gap Candidates
-            </div>
-
-            <div style="
-                font-size:32px;
-                font-weight:750;
-                color:#dc2626;
-            ">
-                {potential_gaps}
-            </div>
-
-        </div>
-        """
-    )
-
-
+    st.html(_kpi_card("Potential Gap Candidates", f"{potential_gaps}",
+                      "Index below 40 (project threshold)", alert=True))
 with kpi3:
-
-    st.html(
-        f"""
-        <div style="
-            background:#ffffff;
-            padding:22px;
-            border-radius:16px;
-            border:1px solid #e2e8f0;
-            box-shadow:0 5px 18px rgba(0,0,0,0.07);
-            min-height:112px;
-        ">
-
-            <div style="
-                font-size:14px;
-                color:#475569;
-                font-weight:600;
-                margin-bottom:9px;
-            ">
-                 Avg. Accessibility
-            </div>
-
-            <div style="
-                font-size:32px;
-                font-weight:750;
-                color:#0f172a;
-            ">
-                {average_accessibility:.2f}
-            </div>
-
-        </div>
-        """
-    )
-
-
+    st.html(_kpi_card("Avg. Accessibility", f"{average_accessibility:.2f}", "Mean index, 0-100 scale"))
 with kpi4:
-
-    st.html(
-        f"""
-        <div style="
-            background:#ffffff;
-            padding:22px;
-            border-radius:16px;
-            border:1px solid #e2e8f0;
-            box-shadow:0 5px 18px rgba(0,0,0,0.07);
-            min-height:112px;
-        ">
-
-            <div style="
-                font-size:14px;
-                color:#475569;
-                font-weight:600;
-                margin-bottom:9px;
-            ">
-                 ML Patterns
-            </div>
-
-            <div style="
-                font-size:32px;
-                font-weight:750;
-                color:#0f172a;
-            ">
-                {ml_patterns}
-            </div>
-
-        </div>
-        """
-    )
-
+    st.html(_kpi_card("ML Patterns", f"{ml_patterns}", "Unsupervised GMM groups"))
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -510,261 +303,7 @@ st.caption(
 
 if len(filtered_df) > 0:
 
-    # -----------------------------------------------------
-    # MAP BOUNDS
-    # -----------------------------------------------------
-
-    min_lat = filtered_df["Latitude"].min()
-    max_lat = filtered_df["Latitude"].max()
-
-    min_lon = filtered_df["Longitude"].min()
-    max_lon = filtered_df["Longitude"].max()
-
-    center_lat = (
-        min_lat + max_lat
-    ) / 2
-
-    center_lon = (
-        min_lon + max_lon
-    ) / 2
-
-
-    # -----------------------------------------------------
-    # CREATE MAP
-    # -----------------------------------------------------
-
-    m = folium.Map(
-        location=[
-            center_lat,
-            center_lon
-        ],
-        zoom_start=10,
-        tiles="OpenStreetMap",
-        control_scale=True
-    )
-
-
-    # -----------------------------------------------------
-    # ADD VILLAGE MARKERS
-    # -----------------------------------------------------
-    
-    for _, row in filtered_df.iterrows():
-
-        accessibility = float(
-            row["Accessibility_Index"]
-        )
-
-
-        # Marker classification
-
-        if accessibility < 40:
-
-            marker_color = "red"
-
-        elif accessibility <= 70:
-
-            marker_color = "orange"
-
-        else:
-
-            marker_color = "green"
-
-
-        # School status
-
-        school_status = (
-            "Yes"
-            if row["Has_School"] == 1
-            else "No"
-        )
-
-
-        # Distance
-
-        distance = row[
-            "Nearest_School_Distance_km"
-        ]
-
-        if pd.notna(distance):
-
-            distance_text = (
-                f"{distance:.2f} km"
-            )
-
-        else:
-
-            distance_text = "N/A"
-
-
-        # -------------------------------------------------
-        # POPUP
-        # -------------------------------------------------
-
-        popup_html = f"""
-        <div style="
-            font-family:Arial;
-            width:260px;
-            line-height:1.5;
-        ">
-
-            <div style="
-                font-size:18px;
-                font-weight:700;
-                margin-bottom:8px;
-            ">
-                {row['Village']}
-            </div>
-
-            <hr>
-
-            <b>Accessibility Index:</b>
-            {accessibility:.2f}
-
-            <br>
-
-            <b>Status:</b>
-            {row['Dashboard_Status']}
-
-            <br>
-
-            <b>Nearest School Distance:</b>
-            {distance_text}
-
-            <br>
-
-            <b>Local School Record:</b>
-            {school_status}
-
-            <br>
-
-            <b>School Count:</b>
-            {int(row['School_Count'])}
-
-            <br>
-
-            <b>ML Pattern:</b>
-            {row['ML_Pattern']}
-
-            <br><br>
-
-            <span style="
-                color:#64748b;
-                font-size:12px;
-            ">
-                Distance uses a village-level
-                coordinate proxy.
-            </span>
-
-        </div>
-        """
-
-
-        # -------------------------------------------------
-        # MARKER
-        # -------------------------------------------------
-
-        folium.CircleMarker(
-            location=[
-                row["Latitude"],
-                row["Longitude"]
-            ],
-
-            radius=6,
-
-            popup=folium.Popup(
-                popup_html,
-                max_width=320
-            ),
-
-            tooltip=(
-                f"{row['Village']} - "
-                f"Accessibility: "
-                f"{accessibility:.1f}"
-            ),
-
-            color=marker_color,
-
-            fill=True,
-
-            fill_color=marker_color,
-
-            fill_opacity=0.78,
-
-            weight=1.5
-
-        ).add_to(m)
-
-
-    # -----------------------------------------------------
-    # FIT MAP TO ALL VILLAGES
-    # -----------------------------------------------------
-
-    m.fit_bounds(
-        [
-            [min_lat, min_lon],
-            [max_lat, max_lon]
-        ],
-        padding=(25, 25)
-    )
-
-
-    # -----------------------------------------------------
-    # MAP LEGEND
-    # -----------------------------------------------------
-
-    legend_html = """
-    <div style="
-        position: fixed;
-        bottom: 25px;
-        left: 25px;
-        z-index: 9999;
-        background: white;
-        padding: 14px 16px;
-        border-radius: 10px;
-        box-shadow: 0 3px 12px rgba(0,0,0,0.20);
-        font-family: Arial;
-        font-size: 13px;
-        color: #1e293b;
-    ">
-
-        <div style="
-            font-size:14px;
-            font-weight:700;
-            margin-bottom:9px;
-        ">
-            Accessibility
-        </div>
-
-        <div style="margin-bottom:6px;">
-            <span style="
-                display:inline-block;
-                width:12px;
-                height:12px;
-                background:red;
-                border-radius:50%;
-                margin-right:7px;
-            "></span>
-            Potential Gap (&lt; 40)
-        </div>
-
-        <div>
-            <span style="
-                display:inline-block;
-                width:12px;
-                height:12px;
-                background:green;
-                border-radius:50%;
-                margin-right:7px;
-            "></span>
-            Higher (> 70)
-        </div>
-
-    </div>
-    """
-
-    m.get_root().html.add_child(
-        folium.Element(legend_html)
-    )
+    m = build_village_map(filtered_df, dark=_prefers_dark_theme())
 
 
     # -----------------------------------------------------
@@ -776,6 +315,11 @@ if len(filtered_df) > 0:
         width=None,
         height=560,
         returned_objects=[]
+    )
+    st.caption(
+        "Distances behind these markers are straight-line (haversine) "
+        "estimates between village-level coordinates, not road distance "
+        "or travel time. Click a marker for village details."
     )
 
 else:
@@ -805,7 +349,10 @@ chart_col1, chart_col2 = st.columns(2)
 with chart_col1:
     st.markdown("#### Accessibility Status")
 
-    status_order = ["Higher", "Potential Gap"]
+    status_order = [
+        s for s in ["Higher", "Moderate", "Potential Gap"]
+        if s in set(df["Dashboard_Status"])
+    ]
 
     status_counts = (
         filtered_df["Dashboard_Status"]
@@ -813,7 +360,14 @@ with chart_col1:
         .reindex(status_order, fill_value=0)
     )
 
-    st.bar_chart(status_counts)
+    st.altair_chart(
+        labelled_bar_chart(
+            status_counts.index, status_counts.values,
+            "Accessibility status", "Number of villages",
+            y_max=max(float(status_counts.max()) * 1.2, 5), value_format=".0f",
+        ),
+        width="stretch",
+    )
 
 
 # =========================================================
@@ -833,7 +387,17 @@ with chart_col2:
         lambda value: pattern_label_map.get(value, value)
     ).value_counts()
 
-    st.bar_chart(pattern_counts, horizontal=True)
+    _short_labels = {
+        "No Local School — High Travel Burden": "No local school",
+        "Local School — Basic Coverage": "Basic coverage",
+        "Local School — Broader Coverage": "Broader coverage",
+    }
+    st.bar_chart(
+        pattern_counts.rename(index=_short_labels),
+        horizontal=True,
+        x_label="ML pattern",
+        y_label="Number of villages"
+    )
 
     st.caption(
         "Patterns identified by unsupervised Gaussian Mixture Model (GMM). "
@@ -842,8 +406,56 @@ with chart_col2:
 
     st.dataframe(
         pattern_counts.rename_axis("ML Pattern").reset_index(name="Village Count"),
-        use_container_width=True,
+        width="stretch",
         hide_index=True
+    )
+
+# =========================================================
+# ML DIAGNOSTICS (UNSUPERVISED)
+# =========================================================
+
+@st.cache_data(show_spinner=False)
+def _cached_gmm_diagnostics(data):
+    return gmm_diagnostics(data)
+
+
+with st.expander("ML model diagnostics - how to read the patterns", expanded=False):
+    _diag = _cached_gmm_diagnostics(df)
+    _ms = _diag["model_selection"].copy()
+    _ms["BIC"] = _ms["BIC"].round(1)
+    _ms["AIC"] = _ms["AIC"].round(1)
+    _ms = _ms.rename(columns={"k": "Clusters (k)", "At_covariance_floor": "Component at covariance floor"})
+    st.dataframe(_ms, width="stretch", hide_index=True)
+    _ari = _diag["seed_ari_vs_published"]
+    _same = sum(1 for v in _ari.values() if v == 1.0)
+    st.write(
+        f"**Reproducibility:** the stored cluster labels "
+        f"{'are' if _diag['published_matches_stored'] else 'are NOT'} "
+        f"reproduced exactly by refitting the same features with random_state=42."
+    )
+    st.write(
+        f"**Seed stability:** {_same} of {len(_ari)} tested random seeds gave exactly the "
+        f"published grouping; the lowest agreement (Adjusted Rand Index) was {min(_ari.values()):.2f}."
+    )
+    if _ms["Component at covariance floor"].any():
+        st.warning(
+            "Most model inputs are 0/1 flags, so some Gaussian components shrink to the "
+            "covariance floor. BIC/AIC then keep falling as k grows and cannot, on their "
+            "own, show that any particular k is best. k=3 is kept because it is easy to interpret."
+        )
+    _no_school_cluster = df.loc[df["Has_School"] == 0, "ML_Cluster"].unique()
+    if len(_no_school_cluster) == 1 and (
+        (df["ML_Cluster"] == _no_school_cluster[0]) == (df["Has_School"] == 0)
+    ).all():
+        st.info(
+            "Has_School is one of the model inputs, so the no-local-school pattern mirrors that "
+            "flag by construction. The unsupervised model mainly adds the split between "
+            "'basic' and 'broader' school coverage among villages that have a recorded school."
+        )
+    st.caption(
+        "These are unsupervised diagnostics. There is no ground-truth label, so accuracy, "
+        "precision or recall do not apply, and the patterns are not validated predictions "
+        "of real-world educational deprivation."
     )
 
 # =========================================================
@@ -852,7 +464,7 @@ with chart_col2:
 
 st.divider()
 
-st.subheader(" EduReach Dataset")
+st.subheader("EduReach Dataset")
 
 st.caption(
     "Village-level accessibility, school, GIS, ML "
@@ -864,109 +476,23 @@ st.caption(
 # DATASET SUMMARY
 # =========================================================
 
+def _summary_card(label, value, alert=False):
+    value_class = "er-value alert" if alert else "er-value"
+    return (
+        f'<div class="er-card compact"><div class="er-label">{label}</div>'
+        f'<div class="{value_class}">{value}</div></div>'
+    )
+
+
 summary_col1, summary_col2, summary_col3 = st.columns(3)
-
-
 with summary_col1:
-
-    st.html(
-        f"""
-        <div style="
-            padding:16px;
-            background:#f8fafc;
-            border:1px solid #e2e8f0;
-            border-radius:12px;
-        ">
-
-            <div style="
-                font-size:13px;
-                color:#64748b;
-            ">
-                Records
-            </div>
-
-            <div style="
-                font-size:24px;
-                font-weight:700;
-                color:#0f172a;
-            ">
-                {len(filtered_df)}
-            </div>
-
-        </div>
-        """
-    )
-
-
+    st.html(_summary_card("Records", f"{len(filtered_df)}"))
 with summary_col2:
-
-    schools_present = int(
-        filtered_df["Has_School"].sum()
-    )
-
-    st.html(
-        f"""
-        <div style="
-            padding:16px;
-            background:#f8fafc;
-            border:1px solid #e2e8f0;
-            border-radius:12px;
-        ">
-
-            <div style="
-                font-size:13px;
-                color:#64748b;
-            ">
-                Villages with Local School Record
-            </div>
-
-            <div style="
-                font-size:24px;
-                font-weight:700;
-                color:#0f172a;
-            ">
-                {schools_present}
-            </div>
-
-        </div>
-        """
-    )
-
-
+    schools_present = int(filtered_df["Has_School"].sum())
+    st.html(_summary_card("Villages with Local School Record", f"{schools_present}"))
 with summary_col3:
-
-    no_school = int(
-        (filtered_df["Has_School"] == 0).sum()
-    )
-
-    st.html(
-        f"""
-        <div style="
-            padding:16px;
-            background:#f8fafc;
-            border:1px solid #e2e8f0;
-            border-radius:12px;
-        ">
-
-            <div style="
-                font-size:13px;
-                color:#64748b;
-            ">
-                No Local School Record
-            </div>
-
-            <div style="
-                font-size:24px;
-                font-weight:700;
-                color:#dc2626;
-            ">
-                {no_school}
-            </div>
-
-        </div>
-        """
-    )
-
+    no_school = int((filtered_df["Has_School"] == 0).sum())
+    st.html(_summary_card("No Local School Record", f"{no_school}", alert=True))
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -979,7 +505,7 @@ display_columns = [
     "Village",
     "Panchayat",
     "Accessibility_Index",
-    "Accessibility_Status",
+    "Dashboard_Status",
     "Nearest_School_Distance_km",
     "Has_School",
     "School_Count",
@@ -1053,10 +579,16 @@ if "Nearest School Distance (km)" in display_df.columns:
     ].round(2)
 
 
+if "Panchayat" in display_df.columns:
+    display_df["Panchayat"] = display_df["Panchayat"].fillna("-")
 st.dataframe(
     display_df,
-    use_container_width=True,
-    hide_index=True
+    width="stretch",
+    hide_index=True,
+    column_config={
+        "Accessibility Index": st.column_config.NumberColumn(format="%.2f"),
+        "Nearest School Distance (km)": st.column_config.NumberColumn(format="%.2f"),
+    },
 )
 
 
@@ -1143,7 +675,7 @@ else:
 
     st.dataframe(
         contribution_data.round(2),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -1153,7 +685,14 @@ else:
         ["Weighted Points"]
     ]
 
-    st.bar_chart(chart_data)
+    st.altair_chart(
+        labelled_bar_chart(
+            chart_data.index, chart_data["Weighted Points"],
+            "Component (weight)", "Weighted points",
+            y_max=46, value_format=".1f", height=300,
+        ),
+        width="stretch",
+    )
 
     calculated_score = contribution_data["Weighted Points"].sum()
 
@@ -1161,6 +700,8 @@ else:
         "Reconstructed Accessibility Index",
         f"{calculated_score:.2f}/100",
         delta=f"{calculated_score - score:+.2f} vs stored index",
+        delta_color="off",
+        delta_arrow="off",
     )
 
     st.caption(
@@ -1216,7 +757,7 @@ else:
     else:
         st.info(
             "The village is in the Higher category under the "
-            "current dashboard's visual rule (index > 70). "
+            "current dashboard's visual rule (index of 70 or above). "
             "This label is not a formal government classification."
         )
 
@@ -1236,73 +777,60 @@ else:
         "has its observed accessibility level in a causal sense."
     )
 
+# =========================================================
+# HOW TO READ THE SCORE (LIMITATIONS)
+# =========================================================
+with st.expander("How to read the Accessibility Index - and its limits", expanded=False):
+    _gap_mask = df["Dashboard_Status"] == "Potential Gap"
+    _gap_is_no_school = bool(((df["Has_School"] == 0) == _gap_mask).all())
+    st.write(
+        "The index is a **project-defined exploratory indicator** "
+        "(0.40 x availability + 0.40 x proximity + 0.20 x school-level coverage). "
+        "It is not an official or validated government metric."
+    )
+    if _gap_is_no_school:
+        st.info(
+            f"In the current data, all {int(_gap_mask.sum())} Potential Gap villages have no "
+            "recorded local school, and every village with a recorded school scores above 40. "
+            "So the Potential Gap label currently coincides with 'no local school record'; "
+            "the index adds a finer ranking within each group rather than a separate verdict."
+        )
+    st.write(
+        "Proximity is a straight-line distance between village-level coordinates, scaled by the "
+        "largest distance in this dataset. A village that has its own school gets distance 0 by "
+        "construction. Road quality, terrain, rivers, school capacity and travel time are not "
+        "measured, and no field validation has been performed."
+    )
+
 # -------------------------------
 # INTERACTIVE INTERVENTION SCENARIO SIMULATOR
 # -------------------------------
-
 st.markdown("---")
 st.markdown("## Interactive Intervention Scenario Simulator")
-
 st.write(
     "Explore how explicitly assumed changes to accessibility "
     "components could affect village-level index scores. "
-    "These are hypothetical scenarios, not real-world predictions."
+    "These are hypothetical scenarios, not real-world predictions. "
+    "The original dataset is never modified."
 )
 
-required_cols = [
-    "Village",
-    "Accessibility_Index",
-    "Availability_Score",
-    "Proximity_Score",
-    "School_Level_Coverage_Score",
-]
-
-missing_cols = [
-    col for col in required_cols
-    if col not in filtered_df.columns
-]
-
-if missing_cols:
-    st.warning(
-        "Simulator cannot run. Missing columns: "
-        + ", ".join(missing_cols)
-    )
-
-elif filtered_df.empty:
+if filtered_df.empty:
     st.info("No villages match the current filters.")
-
 else:
-    scenario_df = filtered_df.copy()
-
-    numeric_cols = [
-        "Accessibility_Index",
-        "Availability_Score",
-        "Proximity_Score",
-        "School_Level_Coverage_Score",
-    ]
-
-    for col in numeric_cols:
-        scenario_df[col] = pd.to_numeric(
-            scenario_df[col], errors="coerce"
-        )
-
-    scenario_df = scenario_df.dropna(subset=numeric_cols)
-
-    if scenario_df.empty:
-        st.warning("No valid accessibility component scores are available.")
-
-    else:
-        st.markdown("### Configure your hypothetical scenario")
-
+    st.markdown("### Configure your hypothetical scenario")
+    sim_col1, sim_col2 = st.columns(2)
+    with sim_col1:
         intervention = st.selectbox(
             "Select intervention",
-            [
-                "Connectivity improvement",
-                "Hypothetical new local school",
-            ],
+            [INTERVENTION_CONNECTIVITY, INTERVENTION_NEW_SCHOOL],
             key="edureach_intervention_type",
         )
-
+        scope = st.selectbox(
+            "Apply the assumption to",
+            [SCOPE_NO_SCHOOL, SCOPE_ALL],
+            key="edureach_scenario_scope",
+        )
+    with sim_col2:
         gap_closed_pct = st.slider(
             "Assumed percentage of component gap closed",
             min_value=0,
@@ -1311,156 +839,111 @@ else:
             step=5,
             help=(
                 "This is a user-selected assumption, not an "
-                "estimated real-world intervention effect."
+                "estimated real-world intervention effect. 0% reproduces the baseline."
             ),
             key="edureach_gap_closed_pct",
         )
 
-        scenario_df["Scenario_Availability"] = (
-            scenario_df["Availability_Score"].clip(0, 100)
+    sim = simulate_scenario(filtered_df, intervention, gap_closed_pct, scope)
+    summary = scenario_summary(sim)
+
+    if intervention == INTERVENTION_CONNECTIVITY:
+        scenario_description = (
+            f"Connectivity scenario: assumed {gap_closed_pct}% of the remaining "
+            "proximity-score gap is closed (for example, a better road or transport link). "
+            "Only the Proximity component changes; availability and coverage are held constant."
         )
-        scenario_df["Scenario_Proximity"] = (
-            scenario_df["Proximity_Score"].clip(0, 100)
+    else:
+        scenario_description = (
+            f"New-school scenario: assumed {gap_closed_pct}% of the remaining availability and "
+            "proximity gaps are closed. The percentage is a stand-in for uncertainty about whether "
+            "a school is built, staffed and actually used. Coverage is held constant because the "
+            "school level of a new school is not modelled."
         )
-        scenario_df["Scenario_Coverage"] = (
-            scenario_df["School_Level_Coverage_Score"].clip(0, 100)
-        )
+    st.info(scenario_description)
 
-        fraction = gap_closed_pct / 100.0
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Baseline Avg. Index", f"{summary['baseline_avg']:.2f}")
+    m2.metric(
+        "Hypothetical Scenario Avg.",
+        f"{summary['scenario_avg']:.2f}",
+        delta=f"{summary['scenario_avg'] - summary['baseline_avg']:+.2f}",
+    )
+    m3.metric("Average Assumed Change", f"{summary['avg_change']:+.2f}")
+    m4.metric(
+        "Villages Affected",
+        f"{summary['affected']} of {summary['villages']}",
+    )
+    st.caption(
+        f"Villages below the Potential Gap threshold ({GAP_THRESHOLD:.0f}): "
+        f"baseline {summary['gap_before']} -> hypothetical {summary['gap_after']}. "
+        "The threshold is this project's own cut-off."
+    )
+    st.warning(
+        "Interpretation limits: the slider controls an assumed component change, not a measured "
+        "intervention effect. The new-school scenario does not model school capacity, staffing, "
+        "site suitability, construction feasibility, or actual road-network travel. "
+        "Index changes use the 40% availability, 40% proximity and 20% coverage weights."
+    )
 
-        if intervention == "Connectivity improvement":
-            scenario_df["Scenario_Proximity"] = (
-                scenario_df["Proximity_Score"].clip(0, 100)
-                + fraction
-                * (
-                    100
-                    - scenario_df["Proximity_Score"].clip(0, 100)
-                )
-            )
-
-            scenario_description = (
-                f"Connectivity scenario: assumed {gap_closed_pct}% "
-                "of the remaining proximity-score gap is closed."
-            )
-
-        else:
-            scenario_df["Scenario_Availability"] = (
-                scenario_df["Availability_Score"].clip(0, 100)
-                + fraction
-                * (
-                    100
-                    - scenario_df["Availability_Score"].clip(0, 100)
-                )
-            )
-
-            scenario_df["Scenario_Proximity"] = (
-                scenario_df["Proximity_Score"].clip(0, 100)
-                + fraction
-                * (
-                    100
-                    - scenario_df["Proximity_Score"].clip(0, 100)
-                )
-            )
-
-            scenario_description = (
-                f"New-school scenario: assumed {gap_closed_pct}% "
-                "of the remaining availability and proximity "
-                "component gaps are closed. Coverage is held constant."
-            )
-
-        # Preserve the original index and apply the weighted
-        # component changes to calculate a transparent scenario.
-        scenario_df["Scenario_Index"] = (
-            scenario_df["Accessibility_Index"]
-            + 0.40
-            * (
-                scenario_df["Scenario_Availability"]
-                - scenario_df["Availability_Score"]
-            )
-            + 0.40
-            * (
-                scenario_df["Scenario_Proximity"]
-                - scenario_df["Proximity_Score"]
-            )
-            + 0.20
-            * (
-                scenario_df["Scenario_Coverage"]
-                - scenario_df["School_Level_Coverage_Score"]
-            )
-        ).clip(0, 100)
-
-        scenario_df["Scenario_Change"] = (
-            scenario_df["Scenario_Index"]
-            - scenario_df["Accessibility_Index"]
-        )
-
-        baseline_avg = scenario_df["Accessibility_Index"].mean()
-        scenario_avg = scenario_df["Scenario_Index"].mean()
-        improvement_avg = scenario_df["Scenario_Change"].mean()
-
-        kpi1, kpi2, kpi3 = st.columns(3)
-
-        kpi1.metric(
-            "Baseline Avg. Index",
-            f"{baseline_avg:.2f}"
-        )
-
-        kpi2.metric(
-            "Hypothetical Scenario Avg.",
-            f"{scenario_avg:.2f}",
-            delta=f"{scenario_avg - baseline_avg:+.2f}"
-        )
-
-        kpi3.metric(
-            "Average Assumed Change",
-            f"{improvement_avg:+.2f}"
-        )
-
-        st.caption(scenario_description)
-
-        st.info(
-            "Interpretation limits: the slider controls an assumed "
-            "component change, not a measured intervention effect. "
-            "The new-school scenario does not model school capacity, "
-            "staffing, site suitability, construction feasibility, "
-            "or actual road-network travel. The index change is "
-            "calculated using the project's 40% availability, "
-            "40% proximity, and 20% school-level coverage weights."
-        )
-
-        st.markdown("###  Baseline vs Hypothetical Scenario")
-
-        chart_data = pd.DataFrame(
-            {
-                "Baseline": [baseline_avg],
-                "Hypothetical Scenario": [scenario_avg],
-            },
-            index=["Average Accessibility Index"],
-        )
-
-        st.bar_chart(chart_data.T)
-
-        st.markdown("### Village-wise Scenario Comparison")
-
-        scenario_display = scenario_df[
-            [
-                "Village",
-                "Accessibility_Index",
-                "Scenario_Index",
-                "Scenario_Change",
+    st.markdown("### Baseline vs Hypothetical Scenario")
+    chart_data = pd.DataFrame(
+        {
+            "Average Accessibility Index": [
+                summary["baseline_avg"],
+                summary["scenario_avg"],
             ]
-        ].rename(
-            columns={
-                "Accessibility_Index": "Baseline Index",
-                "Scenario_Index": "Hypothetical Index",
-                "Scenario_Change": "Assumed Change",
-            }
-        )
+        },
+        index=["Baseline", "Hypothetical Scenario"],
+    )
+    st.altair_chart(
+        labelled_bar_chart(
+            chart_data.index, chart_data["Average Accessibility Index"],
+            "Scenario", "Average index (0-100)",
+            y_max=100, value_format=".2f",
+        ),
+        width="stretch",
+    )
 
+    st.markdown("### Village-wise Scenario Comparison")
+    only_changed = st.checkbox(
+        "Show only villages whose index changes",
+        value=True,
+        key="edureach_only_changed",
+    )
+    scenario_display = sim[
+        [
+            "Village",
+            "Baseline_Index",
+            "Scenario_Index",
+            "Scenario_Change",
+            "Dashboard_Status",
+            "Scenario_Status",
+        ]
+    ].rename(
+        columns={
+            "Baseline_Index": "Baseline Index",
+            "Scenario_Index": "Hypothetical Index",
+            "Scenario_Change": "Assumed Change",
+            "Dashboard_Status": "Baseline Status",
+            "Scenario_Status": "Hypothetical Status",
+        }
+    )
+    if only_changed:
+        scenario_display = scenario_display[scenario_display["Assumed Change"] > 0]
+    scenario_display = scenario_display.sort_values("Assumed Change", ascending=False)
+    if scenario_display.empty:
+        st.info("No village index changes under the current assumptions (try a higher percentage).")
+    else:
         st.dataframe(
             scenario_display.round(2),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
+            column_config={
+                "Baseline Index": st.column_config.NumberColumn(format="%.2f"),
+                "Hypothetical Index": st.column_config.NumberColumn(format="%.2f"),
+                "Assumed Change": st.column_config.NumberColumn(format="%.2f"),
+            },
         )
 
 # =========================================================
@@ -1471,40 +954,22 @@ st.divider()
 
 st.html(
     """
-    <div style="
-        padding:18px 20px;
-        border-radius:14px;
-        background:#f8fafc;
-        border:1px solid #e2e8f0;
-        color:#475569;
-        font-size:13px;
-        line-height:1.7;
-    ">
-
-        <b style="color:#0f172a;">
-            Methodology Note
-        </b>
-
+    <div class="er-note">
+        <b>Methodology Note</b>
         <br>
-
         The EduReach Exploratory Accessibility Index combines
         school availability, proximity and observed school-level
         coverage indicators.
-
         <br><br>
-
         Nearest-school distance is calculated using
         village-level coordinate proxies and straight-line
         distance. The index is intended for exploratory
         accessibility analysis rather than a direct measurement
         of actual travel time or road-network accessibility.
-
         <br><br>
-
         The ML layer uses an unsupervised Gaussian Mixture Model
         to identify naturally occurring accessibility and
         school-coverage patterns.
-
     </div>
     """
 )

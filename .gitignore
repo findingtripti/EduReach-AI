@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 vb_soi_up.*
 *.zip
+.pytest_cache/
+.env
+*.log

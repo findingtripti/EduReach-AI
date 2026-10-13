@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8.0
+# Only needed to re-run the data-preparation scripts that read .xlsx exports
+openpyxl>=3.1
