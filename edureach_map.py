@@ -22,7 +22,7 @@ def _popup_html(row) -> str:
     school = "Yes" if row["Has_School"] == 1 else "No"
     return (
         '<div style="font-family:Arial,sans-serif;font-size:13px;min-width:220px;">'
-        f'<div style="font-size:15px;font-weight:700;">{escape(str(row["Village"]))}</div><hr>'
+        f'<div style="font-size:15px;font-weight:700;margin:0;">{escape(str(row["Village"]))}</div><hr style="margin:6px 0 8px 0;border:0;border-top:1px solid #cbd5e1;">'
         f'<b>Accessibility Index:</b> {float(row["Accessibility_Index"]):.2f}<br>'
         f'<b>Status:</b> {escape(str(row["Dashboard_Status"]))}<br>'
         f'<b>Nearest School Distance:</b> {distance_text}<br>'

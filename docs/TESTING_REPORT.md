@@ -41,8 +41,8 @@ One warning appears: an Altair message ("can't infer vegalite type from 'empty'"
 | Village explanation panel (upper part) | Partly viewed |
 | Baseline-vs-scenario chart and village-wise table (visual) | Seen in the author's screenshots; chart replaced afterwards (see below) and re-checked in the sandbox browser |
 | 1280 px layout | Page loaded in the sandbox; **not inspected**. The author's screenshots were taken at a wider window |
-| **Village map rendering** | Not visible in the sandbox (no internet). **Confirmed on the author's machine from screenshots:** map tiles, red and green markers and the legend (index < 40, index >= 70) render. Clicking a marker to see the popup was not shown in the screenshots; popup content is covered by unit tests. |
-| Filter interactions in the browser | Exercised through AppTest, not by hand in a browser |
+| **Village map rendering** | Not visible in the sandbox (no internet). **Confirmed on the author's machine from screenshots:** map tiles, red and green markers and the legend (index < 40, index >= 70) render. A later screenshot from the author shows the popup for one village (Manwariya Diwan: index 35.92, Potential Gap, 0.34 km, no local school, school count 0, ML pattern) with a matching hover tooltip; other villages were not clicked by hand, but all popups are covered by unit tests. |
+| Filter interactions in the browser | Author's screenshots with the filter "No Local School Record": Total Villages 36 (of 115), Potential Gap Candidates 36, average index 20.34, ML Patterns 1, status chart Higher 0 / Potential Gap 36, only red markers and a one-item legend. Other filter combinations were tested through AppTest only |
 
 ## Run on the author's machine (reported by the author)
 
@@ -75,6 +75,12 @@ After these changes the suite was run again in the sandbox: 55 passed.
 | Switching theme from Streamlit's ⋮ menu (System / Light / Dark) | Browser light then menu Dark: page and cards turned dark. Browser dark then menu Light: page and cards turned light (computed colours read). The "System" option and repeated switching in one session were not tested |
 
 New tests: both map base layers exist and use no third-party key; the app source has no light-only inline colours; the Streamlit config does not force one theme. After the theme work the sandbox run gives **58 passed, 1 warning**.
+
+## Second round on the author's machine (13-10-2026, screenshots)
+
+The author ran the theme build on port 8510 (the first attempt on 8502 showed the old UI because the update had not been applied). Screenshots showed: dark theme (dark cards, readable sidebar title, blue chips, dark banner), light theme, the map with a Light map / Dark map switch, popup and tooltip, the filter checks above, the village-wise table with its checkbox, and the methodology note. The author's `pytest` result for the 58-test suite was not reported.
+
+After those screenshots the KPI and dataset cards were changed to a responsive grid (equal height, wraps to 2 x 2 on narrow windows; measured card heights 152 px at both 1067 px and 1500 px window widths in the sandbox) and the map popup spacing was tightened. The popup spacing change was **not** seen in a browser (the sandbox cannot load the map). The suite still gives 58 passed in the sandbox.
 
 ## Known unresolved issues
 

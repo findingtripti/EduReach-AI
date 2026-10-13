@@ -105,6 +105,11 @@ st.markdown(
     .er-value.alert { color: var(--er-alert); }
     .er-sub { font-size: 12px; color: var(--er-muted); margin-top: 4px; }
 
+    .er-grid { display: grid; gap: 16px; align-items: stretch; }
+    .er-grid-4 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    .er-grid-3 { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+    .er-grid .er-card { height: 100%; box-sizing: border-box; }
+
     /* Sidebar */
     .er-side-title { font-size: 24px; font-weight: 750; color: var(--er-text); margin-bottom: 4px; }
     .er-side-sub { font-size: 13px; color: var(--er-muted); margin-bottom: 22px; }
@@ -273,16 +278,15 @@ def _kpi_card(label, value, sub, alert=False):
     )
 
 
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-with kpi1:
-    st.html(_kpi_card("Total Villages", f"{total_villages}", f"of {len(df)} in study area"))
-with kpi2:
-    st.html(_kpi_card("Potential Gap Candidates", f"{potential_gaps}",
-                      "Index below 40 (project threshold)", alert=True))
-with kpi3:
-    st.html(_kpi_card("Avg. Accessibility", f"{average_accessibility:.2f}", "Mean index, 0-100 scale"))
-with kpi4:
-    st.html(_kpi_card("ML Patterns", f"{ml_patterns}", "Unsupervised GMM groups"))
+st.html(
+    '<div class="er-grid er-grid-4">'
+    + _kpi_card("Total Villages", f"{total_villages}", f"of {len(df)} in study area")
+    + _kpi_card("Potential Gap Candidates", f"{potential_gaps}",
+                "Index below 40 (project threshold)", alert=True)
+    + _kpi_card("Avg. Accessibility", f"{average_accessibility:.2f}", "Mean index, 0-100 scale")
+    + _kpi_card("ML Patterns", f"{ml_patterns}", "Unsupervised GMM groups")
+    + "</div>"
+)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -484,15 +488,15 @@ def _summary_card(label, value, alert=False):
     )
 
 
-summary_col1, summary_col2, summary_col3 = st.columns(3)
-with summary_col1:
-    st.html(_summary_card("Records", f"{len(filtered_df)}"))
-with summary_col2:
-    schools_present = int(filtered_df["Has_School"].sum())
-    st.html(_summary_card("Villages with Local School Record", f"{schools_present}"))
-with summary_col3:
-    no_school = int((filtered_df["Has_School"] == 0).sum())
-    st.html(_summary_card("No Local School Record", f"{no_school}", alert=True))
+schools_present = int(filtered_df["Has_School"].sum())
+no_school = int((filtered_df["Has_School"] == 0).sum())
+st.html(
+    '<div class="er-grid er-grid-3">'
+    + _summary_card("Records", f"{len(filtered_df)}")
+    + _summary_card("Villages with Local School Record", f"{schools_present}")
+    + _summary_card("No Local School Record", f"{no_school}", alert=True)
+    + "</div>"
+)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
