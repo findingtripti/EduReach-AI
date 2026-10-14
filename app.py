@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from streamlit_folium import st_folium
 
+from edureach_charts import labelled_bar_chart
 from edureach_map import build_village_map
 from edureach_core import (
     GAP_THRESHOLD, INTERVENTION_CONNECTIVITY, INTERVENTION_NEW_SCHOOL,
@@ -9,38 +10,6 @@ from edureach_core import (
     load_dashboard_data, simulate_scenario, scenario_summary,
     validate_dataset,
 )
-
-
-import altair as alt
-
-
-def labelled_bar_chart(labels, values, x_title, y_title, y_max, value_format=".2f", height=320):
-    """Bar chart with a fixed 0..y_max axis and horizontal labels.
-
-    The value is written into each category label (for example
-    "Baseline: 67.25"). Axis text follows the active light/dark theme, so the
-    numbers stay readable in both. A fixed axis keeps bars from being clipped
-    and keeps small differences honest.
-    """
-    values = [float(v) for v in values]
-    data = pd.DataFrame({
-        "label": [f"{lab}: {val:{value_format}}" for lab, val in zip(labels, values)],
-        "name": [str(lab) for lab in labels],
-        "value": values,
-    })
-    return (
-        alt.Chart(data)
-        .mark_bar(color="#3b82f6", size=90)
-        .encode(
-            x=alt.X("label:N", sort=None, title=x_title,
-                    axis=alt.Axis(labelAngle=0, labelLimit=320)),
-            y=alt.Y("value:Q", title=y_title,
-                    scale=alt.Scale(domain=[0, y_max], nice=False)),
-            tooltip=[alt.Tooltip("name:N", title=x_title),
-                     alt.Tooltip("value:Q", title=y_title, format=value_format)],
-        )
-        .properties(height=height)
-    )
 
 
 # =========================================================
@@ -75,7 +44,10 @@ st.markdown(
     }
 
     .block-container { padding-top: 1.8rem; padding-bottom: 3rem; }
-    header[data-testid="stHeader"] { background: transparent; }
+    header[data-testid="stHeader"] {
+        background: light-dark(rgba(255,255,255,0.94), rgba(14,17,23,0.94));
+        backdrop-filter: blur(6px);
+    }
     h1, h2, h3 { font-weight: 700 !important; }
     section[data-testid="stSidebar"] { border-right: 1px solid var(--er-card-border); }
     div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
@@ -396,11 +368,13 @@ with chart_col2:
         "Local School — Basic Coverage": "Basic coverage",
         "Local School — Broader Coverage": "Broader coverage",
     }
-    st.bar_chart(
-        pattern_counts.rename(index=_short_labels),
-        horizontal=True,
-        x_label="ML pattern",
-        y_label="Number of villages"
+    _pc = pattern_counts.rename(index=_short_labels)
+    st.altair_chart(
+        labelled_bar_chart(
+            _pc.index, _pc.values, "ML pattern", "Number of villages",
+            y_max=max(float(_pc.max()) * 1.2, 5), value_format=".0f", horizontal=True,
+        ),
+        width="stretch",
     )
 
     st.caption(

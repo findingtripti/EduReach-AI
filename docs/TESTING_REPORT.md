@@ -82,6 +82,18 @@ The author ran the theme build on port 8510 (the first attempt on 8502 showed th
 
 After those screenshots the KPI and dataset cards were changed to a responsive grid (equal height, wraps to 2 x 2 on narrow windows; measured card heights 152 px at both 1067 px and 1500 px window widths in the sandbox) and the map popup spacing was tightened. The popup spacing change was **not** seen in a browser (the sandbox cannot load the map). The suite still gives 58 passed in the sandbox.
 
+## Third round: small cosmetic fixes
+
+Three issues seen in the author's screenshots were fixed:
+
+| Issue seen | Change |
+|---|---|
+| The top bar (Deploy and menu icons) floated over scrolling text because it was transparent | The bar now has a theme-aware, almost opaque background (computed colour checked in light and dark) |
+| The ML Pattern chart used a different blue from the other charts and its axis showed -5 | It now uses the same chart helper (new file `edureach_charts.py`): one blue, fixed 0-based axis, values in the labels. Viewed in light and dark in the sandbox |
+| (follow-up) chart code lived inside `app.py` and could not be tested | Moved to `edureach_charts.py` with 3 new tests (fixed zero-based axis, values in labels, single bar colour; header not transparent) |
+
+The suite now has 61 tests and gives **61 passed** in the sandbox. The author has not yet run this version.
+
 ## Known unresolved issues
 
 - Map not visually verified (above).

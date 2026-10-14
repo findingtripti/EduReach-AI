@@ -19,6 +19,7 @@ An exploratory AI/ML and GIS decision-support dashboard that looks at **governme
 app.py                      Streamlit dashboard
 edureach_core.py            data loading, validation, scoring, explanation, scenarios, ML diagnostics
 edureach_map.py             folium village map
+edureach_charts.py          theme-safe bar charts (fixed axes, values in labels)
 edureach_dashboard.csv      dashboard dataset (115 villages)
 requirements.txt            runtime dependencies
 requirements-dev.txt        + pytest, openpyxl

@@ -357,3 +357,29 @@ def test_streamlit_config_does_not_force_one_theme():
     cfg = tomllib.loads((ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
     assert "base" not in cfg.get("theme", {})
     assert "light" in cfg["theme"] and "dark" in cfg["theme"]
+
+
+# --------------------------------------------------------------- charts
+def test_chart_axis_is_fixed_starts_at_zero_and_shows_values():
+    from edureach_charts import labelled_bar_chart
+    for horizontal in (False, True):
+        spec = labelled_bar_chart(["A", "B"], [30, 49], "Group", "Villages", y_max=60,
+                                  value_format=".0f", horizontal=horizontal).to_dict()
+        enc = spec["layer"][0]["encoding"] if "layer" in spec else spec["encoding"]
+        value_axis = enc["x"] if horizontal else enc["y"]
+        assert value_axis["scale"]["domain"] == [0, 60]
+        labels = [row["label"] for row in next(iter(spec["datasets"].values()))]
+        assert labels == ["A: 30", "B: 49"]
+
+
+def test_chart_uses_a_single_theme_safe_bar_colour():
+    from edureach_charts import BAR_COLOR, labelled_bar_chart
+    spec = labelled_bar_chart(["A"], [5], "G", "V", y_max=10).to_dict()
+    mark = spec["mark"] if "mark" in spec else spec["layer"][0]["mark"]
+    assert mark["color"] == BAR_COLOR
+
+
+def test_app_header_is_not_transparent():
+    src = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert "stHeader" in src and "backdrop-filter" in src
+    assert "background: transparent" not in src.split("stHeader")[1].split("}")[0]
