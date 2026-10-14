@@ -6,3 +6,8 @@ vb_soi_up.*
 .pytest_cache/
 .env
 *.log
+# Old backups and superseded files (kept locally only)
+app_backup_*.py
+app_before_*.py
+edureach_combined_intervention.csv
+edureach_why_analysis.csv
